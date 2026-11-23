@@ -154,7 +154,7 @@ def grab_jpeg(sct, mon):
     if img.width > 1280:
         img = img.resize((1280, int(img.height * 1280 / img.width)))
     buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=50)
+    img.save(buf, "JPEG", quality=45)
     return buf.getvalue()
 
 
@@ -288,22 +288,25 @@ class Host:
             self.net.loop.call_later(1, lambda: asyncio.ensure_future(self.cleanup(pc)))
 
     def capture(self):
-        seq = 0
+        seq, last = 0, None
         with mss.mss() as sct:
             while self.sharing:
                 try:
                     data = grab_jpeg(sct, self.mon)
-                    seq += 1
-                    self.latest = (seq, data)
+                    digest = hashlib.md5(data).digest()
+                    if digest != last:  # only send when the screen actually changed
+                        last = digest
+                        seq += 1
+                        self.latest = (seq, data)
                 except Exception:
                     pass
-                time.sleep(0.06)
+                time.sleep(0.1)
 
     async def send_loop(self, ch, pc):
         last = 0
         while self.sharing and self.pc is pc and ch.readyState == "open":
             seq, data = self.latest
-            if seq != last and data and ch.bufferedAmount < 1_000_000:
+            if seq != last and data and ch.bufferedAmount < 250_000:  # small queue = picture stays up to date
                 last = seq
                 try:
                     send_chunks(ch, data)
@@ -431,7 +434,8 @@ class ViewerNet:
         elif t == "denied":
             self.finish("The other PC denied the connection")
         elif t == "auth_fail":
-            self.finish("Wrong password")
+            self.finish("Wrong password.\nUse the password shown RIGHT NOW in the other PC's RemoteDesk window.\n"
+                        "(If it keeps happening, make sure only ONE RemoteDesk is open on that PC.)")
         elif t == "end":
             self.finish("Session ended")
 
@@ -632,5 +636,24 @@ class App:
         self.root.mainloop()
 
 
+def single_instance():
+    """Only one RemoteDesk per PC (two copies would answer with different passwords)."""
+    import socket
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 47653))
+    except OSError:
+        return None
+    s.listen(1)
+    return s
+
+
 if __name__ == "__main__":
+    _lock = single_instance()
+    if _lock is None:
+        _r = tk.Tk()
+        _r.withdraw()
+        messagebox.showinfo("RemoteDesk", "RemoteDesk is already open on this PC.\n"
+                            "Use the other window, or close it first (Task Manager > RemoteDesk.exe > End task).")
+        sys.exit(0)
     App().run()
