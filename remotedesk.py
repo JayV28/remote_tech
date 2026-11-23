@@ -73,9 +73,18 @@ def load_id():
     return cfg["id"]
 
 
+# Default relay (Metered free plan) so no typing is needed on any PC.
+# Can be overridden or switched off in the app: "Relay settings".
+DEFAULT_TURN = {
+    "url": "turn:global.relay.metered.ca:80",
+    "user": "e5d000d594fa2dc6ff880209",
+    "pass": "7VTINaoELm38gCNT",
+}
+
+
 def rtc_config():
     servers = [RTCIceServer(urls=u) for u in STUN]
-    t = load_cfg().get("turn")  # optional relay for very strict networks
+    t = load_cfg().get("turn", DEFAULT_TURN)  # relay for networks that block direct connections
     if t:
         servers.append(RTCIceServer(urls=t["url"], username=t.get("user"), credential=t.get("pass")))
     return RTCConfiguration(iceServers=servers)
@@ -563,6 +572,7 @@ class App:
         self.e_id.bind("<Return>", lambda e: self.e_pin.focus_set())
         self.e_pin.bind("<Return>", lambda e: self.connect_remote())
         self.e_id.focus_set()
+        tk.Button(r, text="Relay settings (for blocked networks)", command=self.relay_settings).pack(pady=(4, 0))
         tk.Label(r, text="").pack(pady=2)
 
         r.update_idletasks()
@@ -578,6 +588,37 @@ class App:
 
     def set_status(self, text):
         self.root.after(0, lambda: self.status.config(text=text))
+
+    def relay_settings(self):
+        t = load_cfg().get("turn", DEFAULT_TURN)
+        win = tk.Toplevel(self.root)
+        win.title("Relay settings")
+        win.grab_set()
+        fields = []
+        for label, key, show in (("Relay address", "url", ""), ("Username", "user", ""), ("Password", "pass", "*")):
+            tk.Label(win, text=label).pack(pady=(8, 0))
+            e = tk.Entry(win, width=40, show=show)
+            e.insert(0, t.get(key, ""))
+            e.pack(padx=14)
+            fields.append((key, e))
+        tk.Label(win, text="Example address:  turn:global.relay.metered.ca:80", fg="gray").pack(pady=(6, 0))
+        tk.Label(win, text="Same on BOTH PCs. Empty address = relay off.", fg="gray").pack()
+
+        def save():
+            vals = {k: e.get().strip() for k, e in fields}
+            cfg = load_cfg()
+            if vals["url"]:
+                if not vals["url"].startswith(("turn:", "turns:")):
+                    messagebox.showwarning("RemoteDesk", "The address must start with turn: or turns:", parent=win)
+                    return
+                cfg["turn"] = vals
+            else:
+                cfg["turn"] = {}  # empty = relay switched off
+            save_cfg(cfg)
+            messagebox.showinfo("RemoteDesk", "Saved. It is used for the next connection.", parent=win)
+            win.destroy()
+
+        tk.Button(win, text="Save", width=12, command=save).pack(pady=12)
 
     def connect_remote(self):
         rid = self.e_id.get().replace(" ", "")
