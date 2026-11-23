@@ -1,0 +1,5 @@
+aiortc
+requests
+mss
+Pillow
+pynput
