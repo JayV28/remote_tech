@@ -1,4 +1,0 @@
-websockets>=12
-mss
-Pillow
-pynput
