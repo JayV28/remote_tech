@@ -513,8 +513,19 @@ class App:
         self.my_pin = "".join(random.choice("0123456789") for _ in range(6))
         self.root = tk.Tk()
         self.root.title("RemoteDesk")
-        self.root.resizable(False, False)
-        r = self.root
+        self.root.resizable(False, True)  # height can be dragged
+        outer = tk.Frame(self.root)
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        sb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        r = tk.Frame(canvas)
+        win_id = canvas.create_window((0, 0), window=r, anchor="n")
+        r.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.coords(win_id, e.width // 2, 0))
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
 
         tk.Label(r, text="Your ID", font=("Segoe UI", 10)).pack(pady=(14, 0))
         pretty = f"{self.my_id[:3]} {self.my_id[3:6]} {self.my_id[6:]}"
@@ -540,6 +551,12 @@ class App:
         self.e_pin.bind("<Return>", lambda e: self.connect_remote())
         self.e_id.focus_set()
         tk.Label(r, text="").pack(pady=2)
+
+        r.update_idletasks()
+        w = r.winfo_reqwidth() + 30
+        h = min(r.winfo_reqheight() + 10, self.root.winfo_screenheight() - 120)
+        self.root.geometry(f"{w}x{h}")
+        self.root.minsize(w, 200)
 
         self.net = Loop()
         self.host = Host(self.net, self.my_id, self.my_pin,
