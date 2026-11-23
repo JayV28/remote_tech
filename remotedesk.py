@@ -100,12 +100,13 @@ class Signal:
         requests.post(f"{NTFY}/{tp}", data=text.encode(), timeout=15).raise_for_status()
 
     @staticmethod
-    def listen(tp, on_msg, on_open, on_fail, stop):
+    def listen(tp, on_msg, on_open, on_fail, stop, since=None):
         def run():
             while not stop.is_set():
                 try:
-                    with requests.get(f"{NTFY}/{tp}/json", stream=True, timeout=(10, 90)) as r:
-                        for line in r.iter_lines():
+                    with requests.get(f"{NTFY}/{tp}/json" + (f"?since={since}" if since else ""),
+                                      stream=True, timeout=(10, 90)) as r:
+                        for line in r.iter_lines(chunk_size=1):
                             if stop.is_set():
                                 return
                             if not line:
@@ -359,14 +360,21 @@ class ViewerNet:
         loop = asyncio.get_running_loop()
         sid = "".join(random.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(12))
         stop, open_evt, fut = threading.Event(), asyncio.Event(), loop.create_future()
+        self.net_fail = False
+
+        def on_fail():
+            self.net_fail = True
 
         def on_msg(text):
             loop.call_soon_threadsafe(lambda: fut.done() or fut.set_result(text))
 
         Signal.listen(topic(self.rid, sid), on_msg, lambda: loop.call_soon_threadsafe(open_evt.set),
-                      lambda: None, stop)
+                      on_fail, stop, since="all")
         try:
-            await asyncio.wait_for(open_evt.wait(), 15)
+            try:
+                await asyncio.wait_for(open_evt.wait(), 4)
+            except asyncio.TimeoutError:
+                pass  # carry on anyway; since="all" means the answer can't be missed
             pc = self.pc = RTCPeerConnection(rtc_config())
             ch = self.ch = pc.createDataChannel("d")
             ch.on("open", lambda: ch.send(json.dumps({"t": "auth", "pin": self.pin})))
@@ -388,7 +396,12 @@ class ViewerNet:
             await pc.setRemoteDescription(RTCSessionDescription(sdp=ans["sdp"], type=ans["type"]))
             self.state = "waiting"
         except asyncio.TimeoutError:
-            self.finish("No answer. Check the ID and that RemoteDesk is open on the other PC.")
+            if self.net_fail:
+                self.finish("Cannot reach the free introduction service (ntfy.sh). "
+                            "Check this PC's internet / firewall / antivirus.")
+            else:
+                self.finish("No answer. Check the ID, and that RemoteDesk on the other PC is open "
+                            "and says 'Ready to connect'.")
         except Exception as e:
             self.finish(str(e))
         finally:
